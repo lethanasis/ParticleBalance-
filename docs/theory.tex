@@ -1,0 +1,324 @@
+\documentclass{notes}
+
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{siunitx}
+
+\title{Theory of particle and power balance}
+\author{Mathias Hoppe}
+\date{2023-07-30}
+
+\begin{document}
+	\maketitle
+
+	In this document we consider the theory underlining the 0D particle and
+	power balance model implemented in the present Python tool. In the model,
+	we consider a plasma consisting of six distinct particle species:
+	thermal electrons, runaway electrons, main ions, impurity ions, main
+	neutrals, and impurity neutrals. In the particle balance, main (impurity)
+	ions and neutrals are considered together, while the electron densities are
+	deduced from quasi-neutrality.
+
+	\tableofcontents
+
+	\section{Particle balance}
+	The ion rate equation, in the notation of the \DREAM\ paper, is
+	\begin{equation}\label{eq:ionrate}
+		\frac{\dd n_i^{(j)}}{\dd t} =
+			\left(
+				I_i^{(j-1)}n_e+ 
+				\mathcal{I}_i^{(j-1)}
+			\right)n_i^{(j-1)} -
+			\left(
+				I_i^{(j)}n_e +
+				\mathcal{I}_i^{(j)} -
+				R_i^{(j)}n_e
+			\right)n_i^{(j)} +
+			R_i^{(j+1)}n_en_i^{(j+1)}.
+	\end{equation}
+	In the steady-state limit, we take $\dd n_i^{(j)}/\dd t\to 0$.
+
+	\subsection{Newton algorithm}
+	It is observed that a fixed-point iteration algorithm can be slow, or even
+	fail to converge, in cases when the initial guess for the electron density
+	$n_e$ is far from the true solution. To accelerate the convergence, and 
+	hopefully improve its robustness, we can formulate the problem in terms of
+	Newton iteration towards the solution.
+
+	We introduce the target function
+	\begin{equation}\label{eq:target}
+		f(\tilde{n}_e) = \tilde{n}_e - \sum_i \sum_{Z_0} Z_0n_i^{(Z_0)},
+	\end{equation}
+	where $\tilde{n}_e$ is the assumed electron density and $n_i^{(Z_0)}$ are
+	the resulting equilibrium ion densities. The ion densities are also
+	non-linear functions of $\tilde{n}_e$, which calls for the use of a Newton
+	algorithm when searching for the root $f(\tilde{n}_e)=0$.
+
+	Perhaps the most straightforward way of finding $f(\tilde{n}_e)=0$ is to
+	construct a single equation system for both the ion and electron density
+	equations:
+	\begin{equation}
+		\mathbb{A}\bb{x} = \bb{b},
+	\end{equation}
+	where
+	\begin{equation}
+		\bb{x} =
+		\begin{pmatrix}
+			n_1^{(0)} & n_1^{(1)} & \ldots & n_e
+		\end{pmatrix}^\top
+	\end{equation}
+	and $\mathbb{A}$ represents the (non-linear) equations for the ion charge
+	state and electron density, as well as the total ion particle density
+	\begin{equation}\label{eq:Ni}
+		N_i = \sum_{ij} n_i^{(j)}.
+	\end{equation}
+	When evaluating the jacobian matrix $\mathbb{J}$ for $\mathbb{A}$, we must
+	therefore evaluate partial derivates of equations~\eqref{eq:ionrate},
+	\eqref{eq:Ni} and the second term of~\eqref{eq:target}, with respect to
+	$n_i^{(j)}$ and $\tilde{n}_e$. We can neglect the $\tilde{n}_e$ dependence
+	of the fast-electron impact ionization $\mathcal{I}_i^{(j)}$, so that a
+	partial derivative of eq.~\eqref{eq:ionrate} with respect to $n_i^{(j)}$
+	becomes $\mathbb{A}$ itself, while a derivative with respect to
+	$\tilde{n}_e$ must be applied to a rate coefficient times $\tilde{n}_e$,
+	yielding
+	\begin{equation}
+		\frac{\partial}{\partial\tilde{n}_e}\left( I_i^{(j-1)}\tilde{n}_e \right)
+		=
+		\tilde{n}_e
+		\frac{\partial I_i^{(j)}}{\partial\tilde{n}_e} +
+		I_i^{(j)}.
+	\end{equation}
+	The row in $\mathbb{J}$ corresponding to $\partial/\partial\tilde{n}_e$ will
+	thus appear as
+	\begin{equation}
+		\tilde{n}_e\left(
+			\frac{\partial I_i^{(j-1)}}{\partial\tilde{n}_e} -
+			\frac{\partial I_i^{(j)}}{\partial\tilde{n}_e} +
+			\frac{\partial R_i^{(j+1)}}{\partial\tilde{n}_e} -
+			\frac{\partial R_i^{(j)}}{\partial\tilde{n}_e}
+		\right)
+		+
+		I_i^{(j-1)} - I_i^{(j)} + R_i^{(j+1)} - R_i^{(j)}.
+	\end{equation}
+
+	\section{Power balance}
+	\subsection{Electron power balance}
+	The main power balance we consider is that of the thermal electrons. The
+	thermal electron power balance equation is
+	\begin{equation}
+		\frac{\dd W_e}{\dd t} =
+			P_{\rm re} - P_{\rm rad} + \sum_i P_{ei}.
+	\end{equation}
+	\red{TODO: Also consider ohmic heating power}
+	Here, $P_{\rm re}$ denotes the energy gained by thermal electrons via
+	collisions with runaway electrons, given by
+	\begin{equation}
+		P_{\rm re} = 2\pi\int \int_{-1}^1 vF_{\rm fr}(p) f_{\rm re}(p,\xi)\,p^2\,\dd\xi\dd p,
+	\end{equation}
+	where $v=p/\gamma$ is the electron speed, $f_{\rm re}$ is the runaway
+	electron distribution function, and the friction force is, to good
+	approximation,
+	\begin{equation}
+		F_{\rm fr}(p)\approx \frac{e^4 n_e\ln\Lambda_{ee,{\rm rel}}}{4\pi\epsilon_0^2 m_e v^2},
+	\end{equation}
+	with the relativistic Coulomb logarithm
+	\begin{equation}
+		\ln\Lambda_{ee,{\rm rel}} =
+			14.9 + \ln\left(\frac{T_e}{\SI{1}{keV}}\right) - \frac{1}{2}\ln\left(\frac{n_e}{10^{20}\,\si{\per\meter\cubed}}\right)
+			+ \frac{1}{k}\ln\left[ 1 + \left(\frac{\gamma-1}{p_{\rm th}^2}\right)^{k/2}\right]
+	\end{equation}
+	
+	The radiation loss term consists of multiple contributions and can be
+	written on the form
+	\begin{equation}
+		P_{\rm rad} = n_e\sum_i\sum_{j=0}^{Z_i-1}
+			n_i^{(j)} L_i^{(j)},
+	\end{equation}
+	with radiation coefficients
+	\begin{equation}
+		L_i^{(j)} = L_{\rm line} + L_{\rm free} +
+			\Delta W_i^{(j)}\left(I_i^{(j)} - R_i^{(j)}\right),
+	\end{equation}
+	where $L_{\rm line}$ is the ADAS \emph{PLT} rate, $L_{\rm free}$ is the
+	ADAS \emph{PRB} rate, and $\Delta W_i^{(j)}$ is the ionization threshold
+	obtained from NIST.
+
+	The inter-species collisional energy transfer $P_{kl}$ is taken from the
+	basic result found in e.g.\ Landau-Lifshitz
+	\begin{equation}\label{eq:Pkl}
+		P_{kl} = 
+			\frac{
+				\left\langle nZ^2 \right\rangle_k
+				\left\langle nZ^2 \right\rangle_l
+				e^4\ln\Lambda_{kl}
+			}{
+				\left(2\pi\right)^{3/2}\epsilon_0^2 m_k m_l
+			}
+			\frac{T_k - T_l}{
+				\left(
+					\frac{T_k}{m_k} + \frac{T_l}{m_l}
+				\right)^{3/2}
+			},
+	\end{equation}
+	where $\langle nZ^2 \rangle_k = \sum_{j=0}^{Z_k}n_k^{(j)}Z_{0j}^2$ and
+	the Coulomb logarithm for collisions between species $k$ and $l$ is given
+	by
+	\begin{align}
+		\ln\Lambda_{ee} &= 14.9 + \ln\left(\frac{T_e}{\SI{1}{keV}}\right)
+			- \frac{1}{2}\ln\left(\frac{n_e}{10^{20}\,\si{\per\meter\cubed}}\right),\\
+		%
+		\ln\Lambda_{ei} &= 17.3 + \frac{3}{2}\ln\left(\frac{T_e}{\SI{1}{keV}}\right)
+			- \frac{1}{2}\ln\left(\frac{n_e}{10^{20}\,\si{\per\meter\cubed}}\right).
+	\end{align}
+
+	\subsection{Ion power balance}
+	For the ion temperatures, we use the power balance equation
+	\begin{equation}
+		\frac{\dd W_i}{\dd t} =
+			\sum_{k\neq i} P_{ik} - P_{ik,{\rm cx}}
+	\end{equation}
+	where the inter-species collisional energy transfer $P_{ik}$ is as in
+	equation~\eqref{eq:Pkl} and runs over both ion and electron species. The
+	charge-exchange energy loss term takes the form
+	\begin{equation}\label{eq:cx}
+		P_{ik,{\rm cx}} =
+			\frac{3}{2}n_i^{(0)}\left(T_i - T_i^{(0)}\right)
+			R_{ik,{\rm cx}}^{(1)}n_k^{(1)},
+	\end{equation}
+	where $T_i^{(0)}$ denotes the neutral temperature for species $i$ and
+	$R_{ik,{\rm cx}}^{(1)}$ is the charge-exchange rate whereby a neutral ion of
+	species $i$ exchanges an electron with a singly charged ion of species $k$.
+	Note that ADAS data is only available for charge-exchange involving
+	deuterium.
+
+	\subsection{Neutral power balance}
+	For neutrals we consider the power balance
+	\begin{equation}
+		\frac{\dd W_i^{(0)}}{\dd t} =
+			\sum_{k\neq i} P_{ik}^{\rm NN} + P_{i,{\rm cx}} - P_{i,\rm diff}.
+	\end{equation}
+	The first term corresponds to neutral-neutral collisional energy exchange
+	and takes the form
+	\begin{equation}
+		P_{ik}^{\rm NN} =
+			n_k^{(0)} r_{ik}^2
+			\frac{4\sqrt{\pi}}{3}
+			\frac{m_im_k^2}{\left(m_i+m_k\right)^3}
+			\sqrt{2\frac{m_kT_i^{(0)} + m_iT_k^{(0)}}{m_im_k}}
+			\left(T_k^{(0)}-T_i^{(0)}\right),
+	\end{equation}
+	with $r_{ik}=(1/2)(r_i+r_k)$ denoting the effective radius for momentum
+	scattering, and $r_i$ and $r_k$ are the radii for the two neutral particles.
+	The charge-exchange term is~\eqref{eq:cx}, but with a change of sign.
+
+	The last term models cooling of neutrals via heat diffusion to the wall. It
+	is
+	\begin{equation}
+		P_{i,\rm diff} = \frac{D_i}{\Delta r_{\rm w}^2}\left(T_i^{(0)}-T_{\rm wall}\right) n_i^{(0)},
+	\end{equation}
+	where $\Delta r_{\rm w}$ denotes the characteristic distance over which the
+	heat must be transported, and the diffusion coefficient prescribed (it is
+	taken to be $D_i=1$-$\SI{10}{m^2/s}$ to best match DIII-D experiments).
+
+	\section{Solving the equation system}\label{sec:solution}
+	The equation system described in the previous section comprises a
+	multi-dimensional, non-linear system of equations. We are looking for the
+	time-asymptotic ($\dd/\dd t\to 0$) solution to these equations, and this
+	means that a full non-linear solution of the equations may be challenging,
+	due to the potential existence of multiple solutions in this
+	multi-dimensional space. The time-asymptotic limit however allows us to make
+	a number of simplifications and express the system of equations as a single
+	non-linear equation to be solved.
+
+	For a plasma with one main ion species ($D$) and one impurity species ($i$),
+	the system of equations is
+	\begin{equation}\label{eq:sys}
+		\begin{cases}
+			P_{\rm re} - P_{\rm rad} + P_{eD} + P_{ei} = 0,\\
+			%
+			P_{De} + P_{Di} - P_{Di,{\rm cx}} = 0,\\
+			%
+			P_{ie} + P_{iD} - P_{iD,{\rm cx}} = 0,\\
+			%
+			P_{Di}^{\rm NN} + P_{Di,{\rm cx}} - P_{D,\rm diff} = 0,\\
+			%
+			P_{iD}^{\rm NN} + P_{iD,{\rm cx}} - P_{i,\rm diff} = 0.
+		\end{cases}
+	\end{equation}
+	By solving the fourth and fifth equations for $P_{Di,{\rm cx}}$ and
+	$P_{iD,{\rm cx}}$, respectively, and substituting the results into the
+	second and third equations, and then solving the second and third equations
+	for $P_{De}=-P_{eD}$ and $P_{ie}=-P_{ei}$ respectively, the result can be
+	substituted into the first equation to yield
+	\begin{equation}
+		\begin{gathered}
+			P_{\rm re} - P_{\rm rad} + P_{Di} + P_{Di}^{\rm NN} - P_{D,\rm diff} +
+			P_{iD} + P_{iD}^{\rm NN} - P_{i,\rm diff} = 0,\\
+			%
+			\implies\\
+			%
+			P_{\rm re} - P_{\rm rad} - P_{D,\rm diff} - P_{i,\rm diff} = 0.
+		\end{gathered}
+	\end{equation}
+	All terms in this expression depends non-linearly on the electron
+	temperature $T_e$, not at least via the ion and electron densities which
+	we assume to be in coronal equilibrium. The two transport loss terms however
+	also depend on the $D$ and $i$ species neutral temperatures, $T_D^{(0)}$ and
+	$T_i^{(0)}$. If we assume that the ion and electron equilibriation is very
+	fast, so that $T_e=T_i$, and if we assume that the neutral-neutral
+	equilibration time scale is also very fast, so that $T_D^{(0)}=T_i^{(0)}$,
+	the fourth and fifth equations of~\eqref{eq:sys} reduce to
+	\begin{equation}
+		\begin{cases}
+			\frac{3}{2}n_D^{(0)} R_{Di,\rm cx}^{(1)}n_i^{(1)}
+				\left(T_e-T_D^{(0)}\right) =
+			\frac{D_i}{\Delta r_{\rm w}^2}\left(T_D^{(0)}-T_{\rm wall}\right)n_D^{(0)},\\
+			%
+			\frac{3}{2}n_i^{(0)} R_{iD,\rm cx}^{(1)}n_D^{(1)}
+				\left(T_e-T_i^{(0)}\right) =
+			\frac{D_i}{\Delta r_{\rm w}^2}\left(T_i^{(0)}-T_{\rm wall}\right)n_i^{(0)},
+		\end{cases}
+	\end{equation}
+	from which closed expressions for the neutral temperatures can be obtained
+	as
+	\begin{equation}
+		\begin{aligned}
+			T_D^{(0)} &= \frac{
+				\frac{3}{2}n_i^{(1)}R_{Di,\rm cx}^{(1)}T_e +
+				\frac{D_i}{\Delta r_{\rm w}^2}T_{\rm wall}
+			}{
+				\frac{3}{2}n_i^{(1)}R_{Di,\rm cx}^{(1)} +
+				\frac{D_i}{\Delta r_{\rm w}^2}
+			}
+			\equiv (1-\alpha_D) T_e + \alpha_D T_{\rm wall},\\
+			%
+			T_i^{(0)} &= \frac{
+				\frac{3}{2}n_D^{(1)}R_{iD,\rm cx}^{(1)}T_e +
+				\frac{D_i}{\Delta r_{\rm w}^2}T_{\rm wall}
+			}{
+				\frac{3}{2}n_D^{(1)}R_{iD,\rm cx}^{(1)} +
+				\frac{D_i}{\Delta r_{\rm w}^2}
+			}
+			\equiv (1-\alpha_i) T_e + \alpha_i T_{\rm wall},\\
+		\end{aligned}
+	\end{equation}
+	with the transport efficiency $\alpha_k$ given by
+	\begin{equation}
+		\alpha_k = \frac{
+			D_i/\Delta r_{\rm w}^2
+		}{
+			\frac{3}{2}n_D^{(1)}n_i^{(1)}R_{iD,\rm cx}^{(1)}/n_k^{(1)} +
+			D_i/\Delta r_{\rm w}^2
+		},
+		\qquad k\in\{D, i\},
+	\end{equation}
+	determining whether the neutral temperature is closer to the electron or
+	wall temperature.
+
+	\section{Estimation of time-scales}
+	For the simplifications made in section~\ref{sec:solution} to be valid, the
+	time scales of all processes must be much faster than the duration of the
+	runaway plateau which we are considering. In this section, we will therefore
+	estimate the time scales of the various processes modelled.
+
+\end{document}
